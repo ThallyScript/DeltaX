@@ -1,0 +1,408 @@
+local CoreGui = game:GetService("CoreGui")
+local HttpService = game:GetService("HttpService")
+local TeleportService = game:GetService("TeleportService")
+local Players = game:GetService("Players")
+local UserInputService = game:GetService("UserInputService")
+local TweenService = game:GetService("TweenService")
+local LocalPlayer = Players.LocalPlayer
+
+-- ==========================================
+-- PREPARAÇÃO DO SISTEMA DE ARQUIVOS (SALVOS)
+-- ==========================================
+local SaveFolder = "DeltaX_SavedScripts"
+if isfolder and not isfolder(SaveFolder) then
+    makefolder(SaveFolder)
+end
+
+local function CleanFileName(str)
+    return string.gsub(str, "[\\/:*?\"<>|]", "") -- Remove caracteres inválidos para Windows/Android
+end
+
+-- ==========================================
+-- 1. ESTRUTURA PRINCIPAL PREMIUM
+-- ==========================================
+if CoreGui:FindFirstChild("DeltaX_Premium") then
+    CoreGui.DeltaX_Premium:Destroy()
+end
+
+local ScreenGui = Instance.new("ScreenGui")
+ScreenGui.Name = "DeltaX_Premium"
+ScreenGui.ResetOnSpawn = false
+ScreenGui.Parent = CoreGui
+
+local function Create(className, props)
+    local inst = Instance.new(className)
+    for k, v in pairs(props) do inst[k] = v end
+    return inst
+end
+
+-- Botão Flutuante (Toggle)
+local ToggleBtn = Create("ImageButton", {
+    Size = UDim2.new(0, 50, 0, 50), Position = UDim2.new(0.5, -25, 0, 10),
+    BackgroundColor3 = Color3.fromRGB(15, 15, 18), Image = "rbxassetid://10886322336", Parent = ScreenGui
+})
+Create("UICorner", {CornerRadius = UDim.new(1, 0), Parent = ToggleBtn})
+Create("UIStroke", {Color = Color3.fromRGB(80, 100, 255), Thickness = 2, Parent = ToggleBtn})
+
+-- Main Frame (Janela Principal)
+local MainFrame = Create("Frame", {
+    Size = UDim2.new(0, 650, 0, 400), Position = UDim2.new(0.5, -325, 0.5, -200),
+    BackgroundColor3 = Color3.fromRGB(18, 18, 22), ClipsDescendants = true, Parent = ScreenGui, Visible = false
+})
+Create("UICorner", {CornerRadius = UDim.new(0, 10), Parent = MainFrame})
+Create("UIStroke", {Color = Color3.fromRGB(40, 40, 50), Thickness = 1, Parent = MainFrame})
+
+-- Topbar (Para arrastar)
+local Topbar = Create("Frame", {
+    Size = UDim2.new(1, 0, 0, 30), BackgroundTransparency = 1, Parent = MainFrame
+})
+
+-- Barra Lateral (Menu)
+local Sidebar = Create("Frame", {
+    Size = UDim2.new(0, 160, 1, 0), BackgroundColor3 = Color3.fromRGB(13, 13, 16), Parent = MainFrame
+})
+Create("UICorner", {CornerRadius = UDim.new(0, 10), Parent = Sidebar})
+
+local Title = Create("TextLabel", {
+    Size = UDim2.new(1, 0, 0, 50), BackgroundTransparency = 1, Text = "DeltaX Premium",
+    TextColor3 = Color3.fromRGB(255, 255, 255), Font = Enum.Font.GothamBold, TextSize = 16, Parent = Sidebar
+})
+Create("UIStroke", {Color = Color3.fromRGB(80, 100, 255), Thickness = 1, Parent = Title})
+
+local ContentArea = Create("Frame", {
+    Size = UDim2.new(1, -170, 1, -20), Position = UDim2.new(0, 165, 0, 10), BackgroundTransparency = 1, Parent = MainFrame
+})
+
+-- ==========================================
+-- SISTEMA DE DRAG & RESIZE (REDIMENSIONAR)
+-- ==========================================
+local function MakeDraggable(gui, dragArea)
+    local dragging, dragInput, dragStart, startPos
+    dragArea.InputBegan:Connect(function(input)
+        if input.UserInputType == Enum.UserInputType.MouseButton1 or input.UserInputType == Enum.UserInputType.Touch then
+            dragging = true; dragStart = input.Position; startPos = gui.Position
+            input.Changed:Connect(function() if input.UserInputState == Enum.UserInputState.End then dragging = false end end)
+        end
+    end)
+    dragArea.InputChanged:Connect(function(input)
+        if input.UserInputType == Enum.UserInputType.MouseMovement or input.UserInputType == Enum.UserInputType.Touch then dragInput = input end
+    end)
+    UserInputService.InputChanged:Connect(function(input)
+        if input == dragInput and dragging then
+            local delta = input.Position - dragStart
+            gui.Position = UDim2.new(startPos.X.Scale, startPos.X.Offset + delta.X, startPos.Y.Scale, startPos.Y.Offset + delta.Y)
+        end
+    end)
+end
+MakeDraggable(ToggleBtn, ToggleBtn)
+MakeDraggable(MainFrame, Topbar)
+ToggleBtn.MouseButton1Click:Connect(function() MainFrame.Visible = not MainFrame.Visible end)
+
+-- Handle de Resize
+local ResizeHandle = Create("TextButton", {
+    Size = UDim2.new(0, 20, 0, 20), Position = UDim2.new(1, -20, 1, -20), BackgroundTransparency = 1,
+    Text = "◢", TextColor3 = Color3.fromRGB(100, 100, 100), TextSize = 18, Parent = MainFrame, ZIndex = 10
+})
+local resizing, resizeStart, startSize
+ResizeHandle.InputBegan:Connect(function(input)
+    if input.UserInputType == Enum.UserInputType.MouseButton1 or input.UserInputType == Enum.UserInputType.Touch then
+        resizing = true; resizeStart = input.Position; startSize = MainFrame.AbsoluteSize
+        input.Changed:Connect(function() if input.UserInputState == Enum.UserInputState.End then resizing = false end end)
+    end
+end)
+UserInputService.InputChanged:Connect(function(input)
+    if resizing and (input.UserInputType == Enum.UserInputType.MouseMovement or input.UserInputType == Enum.UserInputType.Touch) then
+        local delta = input.Position - resizeStart
+        local newX = math.clamp(startSize.X + delta.X, 500, 900)
+        local newY = math.clamp(startSize.Y + delta.Y, 300, 600)
+        MainFrame.Size = UDim2.new(0, newX, 0, newY)
+    end
+end)
+
+-- ==========================================
+-- GESTÃO DE ABAS
+-- ==========================================
+local Tabs = {}
+local Buttons = {}
+
+local function CreateTab(name, icon, yPos)
+    local btn = Create("TextButton", {
+        Size = UDim2.new(0.85, 0, 0, 35), Position = UDim2.new(0.075, 0, 0, yPos), BackgroundColor3 = Color3.fromRGB(20, 20, 25),
+        Text = " " .. icon .. " " .. name, TextColor3 = Color3.fromRGB(200, 200, 200), Font = Enum.Font.GothamMedium, TextSize = 13,
+        TextXAlignment = Enum.TextXAlignment.Left, Parent = Sidebar
+    })
+    Create("UICorner", {CornerRadius = UDim.new(0, 6), Parent = btn})
+    local frame = Create("Frame", {Size = UDim2.new(1, 0, 1, 0), BackgroundTransparency = 1, Parent = ContentArea, Visible = false})
+    table.insert(Tabs, frame); table.insert(Buttons, btn)
+    
+    btn.MouseButton1Click:Connect(function()
+        for i, t in ipairs(Tabs) do
+            t.Visible = (t == frame)
+            TweenService:Create(Buttons[i], TweenInfo.new(0.2), {
+                BackgroundColor3 = (t == frame) and Color3.fromRGB(80, 100, 255) or Color3.fromRGB(20, 20, 25),
+                TextColor3 = (t == frame) and Color3.fromRGB(255, 255, 255) or Color3.fromRGB(200, 200, 200)
+            }):Play()
+        end
+    end)
+    return frame, btn
+end
+
+local TabCloud, BtnCloud = CreateTab("Nuvem", "☁️", 60)
+local TabSaved, BtnSaved = CreateTab("Salvos", "💾", 100)
+local TabExec, BtnExec = CreateTab("Executor", "💻", 140)
+local TabConfig, BtnConfig = CreateTab("Servidor", "⚙️", 180)
+
+-- ==========================================
+-- 2. ABA: EXECUTOR (Estilo IDE)
+-- ==========================================
+local ExecBox = Create("TextBox", {
+    Size = UDim2.new(1, 0, 1, -45), Position = UDim2.new(0, 0, 0, 0), BackgroundColor3 = Color3.fromRGB(25, 25, 30),
+    Text = "-- Cole ou envie seu script aqui...\n", TextColor3 = Color3.fromRGB(220, 220, 220), TextXAlignment = Enum.TextXAlignment.Left,
+    TextYAlignment = Enum.TextYAlignment.Top, Font = Enum.Font.Code, TextSize = 13, MultiLine = true, ClearTextOnFocus = false, Parent = TabExec
+})
+Create("UICorner", {CornerRadius = UDim.new(0, 6), Parent = ExecBox})
+Create("UIPadding", {PaddingTop = UDim.new(0, 5), PaddingLeft = UDim.new(0, 5), Parent = ExecBox})
+
+local function CreateExecBtn(txt, color, pos, callback)
+    local btn = Create("TextButton", {
+        Size = UDim2.new(0.3, 0, 0, 35), Position = pos, BackgroundColor3 = color, Text = txt,
+        TextColor3 = Color3.fromRGB(255, 255, 255), Font = Enum.Font.GothamBold, TextSize = 12, Parent = TabExec
+    })
+    Create("UICorner", {CornerRadius = UDim.new(0, 6), Parent = btn})
+    btn.MouseButton1Click:Connect(callback)
+end
+
+CreateExecBtn("▶ Executar", Color3.fromRGB(0, 170, 100), UDim2.new(0, 0, 1, -35), function()
+    local func, err = loadstring(ExecBox.Text)
+    if func then task.spawn(func) else warn("Erro no código:", err) end
+end)
+CreateExecBtn("🗑 Limpar", Color3.fromRGB(200, 50, 50), UDim2.new(0.35, 0, 1, -35), function() ExecBox.Text = "" end)
+CreateExecBtn("📋 Copiar", Color3.fromRGB(80, 100, 255), UDim2.new(0.7, 0, 1, -35), function() if setclipboard then setclipboard(ExecBox.Text) end end)
+
+-- ==========================================
+-- MODAL DE OPÇÕES (POPUP QUANDO CLICA NO SCRIPT)
+-- ==========================================
+local ModalBg = Create("Frame", {
+    Size = UDim2.new(1, 0, 1, 0), BackgroundColor3 = Color3.fromRGB(0, 0, 0), BackgroundTransparency = 0.5,
+    Visible = false, ZIndex = 50, Parent = MainFrame, Active = true
+})
+local ModalBox = Create("Frame", {
+    Size = UDim2.new(0, 300, 0, 250), Position = UDim2.new(0.5, -150, 0.5, -125),
+    BackgroundColor3 = Color3.fromRGB(25, 25, 30), ZIndex = 51, Parent = ModalBg
+})
+Create("UICorner", {CornerRadius = UDim.new(0, 10), Parent = ModalBox})
+Create("UIStroke", {Color = Color3.fromRGB(80, 100, 255), Thickness = 1, Parent = ModalBox})
+
+local ModalTitle = Create("TextLabel", {
+    Size = UDim2.new(1, -20, 0, 30), Position = UDim2.new(0, 10, 0, 10), BackgroundTransparency = 1,
+    Text = "Script Name", TextColor3 = Color3.fromRGB(255, 255, 255), Font = Enum.Font.GothamBold, TextSize = 14,
+    TextWrapped = true, ZIndex = 52, Parent = ModalBox
+})
+
+local function CreateModalBtn(txt, yPos, color, callback)
+    local btn = Create("TextButton", {
+        Size = UDim2.new(0.9, 0, 0, 35), Position = UDim2.new(0.05, 0, 0, yPos), BackgroundColor3 = color,
+        Text = txt, TextColor3 = Color3.fromRGB(255, 255, 255), Font = Enum.Font.GothamBold, TextSize = 12, ZIndex = 52, Parent = ModalBox
+    })
+    Create("UICorner", {CornerRadius = UDim.new(0, 6), Parent = btn})
+    btn.MouseButton1Click:Connect(function() ModalBg.Visible = false; callback() end)
+    return btn
+end
+
+local CloseModalBtn = Create("TextButton", {
+    Size = UDim2.new(0, 25, 0, 25), Position = UDim2.new(1, -30, 0, 5), BackgroundColor3 = Color3.fromRGB(200, 50, 50),
+    Text = "X", TextColor3 = Color3.fromRGB(255, 255, 255), Font = Enum.Font.GothamBold, ZIndex = 52, Parent = ModalBox
+})
+Create("UICorner", {CornerRadius = UDim.new(0, 6), Parent = CloseModalBtn})
+CloseModalBtn.MouseButton1Click:Connect(function() ModalBg.Visible = false end)
+
+local ActiveScriptData = nil
+
+CreateModalBtn("▶ Executar Agora", 60, Color3.fromRGB(0, 170, 100), function()
+    if ActiveScriptData then loadstring(ActiveScriptData.code)() end
+end)
+CreateModalBtn("💻 Levar para Executor", 100, Color3.fromRGB(180, 120, 0), function()
+    if ActiveScriptData then
+        ExecBox.Text = ActiveScriptData.code
+        BtnExec.MouseButton1Click:Fire() -- Muda pra aba automaticamente
+    end
+end)
+CreateModalBtn("💾 Salvar Script", 140, Color3.fromRGB(80, 100, 255), function()
+    if ActiveScriptData and writefile then
+        local safeName = CleanFileName(ActiveScriptData.title) .. ".json"
+        local jsonData = HttpService:JSONEncode(ActiveScriptData)
+        writefile(SaveFolder .. "/" .. safeName, jsonData)
+        print("Script Salvo:", safeName)
+    end
+end)
+CreateModalBtn("📋 Copiar Código", 180, Color3.fromRGB(60, 60, 70), function()
+    if ActiveScriptData and setclipboard then setclipboard(ActiveScriptData.code) end
+end)
+
+-- ==========================================
+-- 3. ABAS DE PESQUISA (NUVEM E SALVOS)
+-- ==========================================
+local function SetupGridTab(parentTab, isCloud)
+    local SearchBox = Create("TextBox", {
+        Size = UDim2.new(1, -70, 0, 35), Position = UDim2.new(0, 0, 0, 0), BackgroundColor3 = Color3.fromRGB(30, 30, 35),
+        PlaceholderText = isCloud and " Procurar na Nuvem..." or " Procurar nos Salvos...", Text = "",
+        TextColor3 = Color3.fromRGB(255, 255, 255), Font = Enum.Font.Gotham, TextSize = 13, ClearTextOnFocus = false, Parent = parentTab
+    })
+    Create("UICorner", {CornerRadius = UDim.new(0, 6), Parent = SearchBox})
+    
+    local SearchBtn = Create("TextButton", {
+        Size = UDim2.new(0, 60, 0, 35), Position = UDim2.new(1, -60, 0, 0), BackgroundColor3 = Color3.fromRGB(80, 100, 255),
+        Text = "🔎", TextColor3 = Color3.fromRGB(255, 255, 255), Font = Enum.Font.Gotham, TextSize = 16, Parent = parentTab
+    })
+    Create("UICorner", {CornerRadius = UDim.new(0, 6), Parent = SearchBtn})
+    
+    local Scroll = Create("ScrollingFrame", {
+        Size = UDim2.new(1, 0, 1, -45), Position = UDim2.new(0, 0, 0, 45), BackgroundTransparency = 1,
+        ScrollBarThickness = 4, CanvasSize = UDim2.new(0, 0, 0, 0), Parent = parentTab
+    })
+    Create("UIGridLayout", {CellSize = UDim2.new(0, 150, 0, 120), CellPadding = UDim2.new(0, 10, 0, 10), Parent = Scroll})
+    
+    return SearchBox, SearchBtn, Scroll
+end
+
+local CloudSearch, CloudBtn, CloudScroll = SetupGridTab(TabCloud, true)
+local SavedSearch, SavedBtn, SavedScroll = SetupGridTab(TabSaved, false)
+
+-- Carregador de Imagem em Nuvem com Cache
+local function LoadWebImage(imagePath, imageLabel)
+    if not imagePath or not writefile or not getcustomasset then return end
+    task.spawn(function()
+        local fileName = "DeltaX_" .. imagePath:match("([^/]+)$")
+        if isfile and isfile(fileName) then
+            imageLabel.Image = getcustomasset(fileName) return
+        end
+        local success, data = pcall(function() return game:HttpGet("https://scriptblox.com" .. imagePath) end)
+        if success and data then
+            writefile(fileName, data); imageLabel.Image = getcustomasset(fileName)
+        end
+    end)
+end
+
+-- Renderiza os Blocos de Script
+local function CreateScriptCard(scrollParent, title, code, imagePath)
+    local Card = Create("TextButton", { -- Agora o cartão inteiro é clicável
+        BackgroundColor3 = Color3.fromRGB(35, 35, 40), Text = "", AutoButtonColor = false, Parent = scrollParent
+    })
+    Create("UICorner", {CornerRadius = UDim.new(0, 6), Parent = Card})
+    
+    local ScriptImg = Create("ImageLabel", {
+        Size = UDim2.new(1, 0, 0, 75), BackgroundTransparency = 1, ScaleType = Enum.ScaleType.Crop, Parent = Card
+    })
+    Create("UICorner", {CornerRadius = UDim.new(0, 6), Parent = ScriptImg})
+    if imagePath then LoadWebImage(imagePath, ScriptImg) end
+    
+    local TitleLbl = Create("TextLabel", {
+        Size = UDim2.new(1, -10, 1, -80), Position = UDim2.new(0, 5, 0, 80), BackgroundTransparency = 1,
+        Text = title, TextColor3 = Color3.fromRGB(220, 220, 220), Font = Enum.Font.Gotham, TextSize = 11,
+        TextWrapped = true, TextTruncate = Enum.TextTruncate.AtEnd, Parent = Card
+    })
+    
+    -- Efeito visual de hover
+    Card.MouseEnter:Connect(function() TweenService:Create(Card, TweenInfo.new(0.2), {BackgroundColor3 = Color3.fromRGB(45, 45, 55)}):Play() end)
+    Card.MouseLeave:Connect(function() TweenService:Create(Card, TweenInfo.new(0.2), {BackgroundColor3 = Color3.fromRGB(35, 35, 40)}):Play() end)
+    
+    -- Quando clica, abre o Modal
+    Card.MouseButton1Click:Connect(function()
+        ActiveScriptData = {title = title, code = code, image = imagePath}
+        ModalTitle.Text = title
+        ModalBg.Visible = true
+    end)
+end
+
+-- Funcionalidade: Buscar na Nuvem
+CloudBtn.MouseButton1Click:Connect(function()
+    local query = string.gsub(CloudSearch.Text, " ", "%%20")
+    if query == "" then return end
+    for _, c in pairs(CloudScroll:GetChildren()) do if c:IsA("TextButton") then c:Destroy() end end
+    
+    local url = "https://scriptblox.com/api/script/search?q=" .. query .. "&mode=free&max=30&page=1"
+    local success, response = pcall(function() return game:HttpGet(url) end)
+    if success and response then
+        local data = HttpService:JSONDecode(response)
+        if data.result and data.result.scripts then
+            for _, sc in ipairs(data.result.scripts) do
+                CreateScriptCard(CloudScroll, sc.title, sc.script, sc.image)
+            end
+            CloudScroll.CanvasSize = UDim2.new(0, 0, 0, math.ceil(#data.result.scripts / 3) * 130)
+        end
+    end
+end)
+
+-- Funcionalidade: Buscar nos Salvos Locais
+local function LoadSavedScripts()
+    for _, c in pairs(SavedScroll:GetChildren()) do if c:IsA("TextButton") then c:Destroy() end end
+    if not listfiles then return end
+    
+    local files = listfiles(SaveFolder)
+    local count = 0
+    local filter = string.lower(SavedSearch.Text)
+    
+    for _, file in ipairs(files) do
+        local success, contents = pcall(function() return readfile(file) end)
+        if success then
+            local data = HttpService:JSONDecode(contents)
+            if filter == "" or string.find(string.lower(data.title), filter) then
+                CreateScriptCard(SavedScroll, data.title, data.code, data.image)
+                count = count + 1
+            end
+        end
+    end
+    SavedScroll.CanvasSize = UDim2.new(0, 0, 0, math.ceil(count / 3) * 130)
+end
+
+SavedBtn.MouseButton1Click:Connect(LoadSavedScripts)
+BtnSaved.MouseButton1Click:Connect(LoadSavedScripts) -- Recarrega quando abre a aba
+
+-- ==========================================
+-- 4. ABA: SERVIDOR E FPS
+-- ==========================================
+local function CreateServerConfig(txt, pos, callback)
+    local btn = Create("TextButton", {
+        Size = UDim2.new(1, 0, 0, 40), Position = pos, BackgroundColor3 = Color3.fromRGB(30, 30, 35),
+        Text = txt, TextColor3 = Color3.fromRGB(220, 220, 220), Font = Enum.Font.GothamBold, TextSize = 13, Parent = TabConfig
+    })
+    Create("UICorner", {CornerRadius = UDim.new(0, 6), Parent = btn})
+    btn.MouseButton1Click:Connect(callback)
+end
+
+CreateServerConfig("🔄 Rejoin Server", UDim2.new(0, 0, 0, 0), function() TeleportService:TeleportToPlaceInstance(game.PlaceId, game.JobId, LocalPlayer) end)
+CreateServerConfig("🎲 Server Hop", UDim2.new(0, 0, 0, 50), function()
+    local url = "https://games.roblox.com/v1/games/" .. game.PlaceId .. "/servers/Public?sortOrder=Asc&limit=100"
+    local s, r = pcall(function() return game:HttpGet(url) end)
+    if s then
+        local data = HttpService:JSONDecode(r); local svs = {}
+        for _, v in ipairs(data.data) do if v.playing < v.maxPlayers and v.id ~= game.JobId then table.insert(svs, v) end end
+        if #svs > 0 then TeleportService:TeleportToPlaceInstance(game.PlaceId, svs[math.random(1, #svs)].id, LocalPlayer) end
+    end
+end)
+CreateServerConfig("📉 Smallest Server", UDim2.new(0, 0, 0, 100), function()
+    local url = "https://games.roblox.com/v1/games/" .. game.PlaceId .. "/servers/Public?sortOrder=Asc&limit=100"
+    local s, r = pcall(function() return game:HttpGet(url) end)
+    if s then
+        local data = HttpService:JSONDecode(r); local svs = {}
+        for _, v in ipairs(data.data) do if v.playing < v.maxPlayers and v.id ~= game.JobId then table.insert(svs, v) end end
+        if #svs > 0 then
+            table.sort(svs, function(a, b) return a.playing < b.playing end)
+            TeleportService:TeleportToPlaceInstance(game.PlaceId, svs[1].id, LocalPlayer)
+        end
+    end
+end)
+
+local FpsTitle = Create("TextLabel", {
+    Size = UDim2.new(1, 0, 0, 30), Position = UDim2.new(0, 0, 0, 160), BackgroundTransparency = 1,
+    Text = "Desbloqueio de FPS:", TextColor3 = Color3.fromRGB(200, 200, 200), Font = Enum.Font.GothamBold, TextSize = 14, TextXAlignment = Enum.TextXAlignment.Left, Parent = TabConfig
+})
+local fpsLayout = Create("UIListLayout", {FillDirection = Enum.FillDirection.Horizontal, Padding = UDim.new(0, 10), Parent = Create("Frame", {Size = UDim2.new(1, 0, 0, 40), Position = UDim2.new(0, 0, 0, 190), BackgroundTransparency = 1, Parent = TabConfig})})
+local function SetupFPSBtn(fps, txt)
+    local btn = Create("TextButton", {Size = UDim2.new(0, 90, 1, 0), BackgroundColor3 = Color3.fromRGB(40, 40, 45), Text = txt, TextColor3 = Color3.fromRGB(255, 255, 255), Font = Enum.Font.GothamBold, TextSize = 12, Parent = fpsLayout.Parent})
+    Create("UICorner", {CornerRadius = UDim.new(0, 6), Parent = btn})
+    btn.MouseButton1Click:Connect(function() if setfpscap then setfpscap(fps) end end)
+end
+SetupFPSBtn(60, "60 FPS"); SetupFPSBtn(90, "90 FPS"); SetupFPSBtn(120, "120 FPS"); SetupFPSBtn(9999, "MAX")
+
+BtnCloud.MouseButton1Click:Fire() -- Inicia na aba de nuvem
